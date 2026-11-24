@@ -85,3 +85,31 @@ npm install
 npm run dev
 ```
 Open `http://localhost:5173`, paste your ngrok URL into the **Google Colab Server Status** bar, wait for **Connected — Ready to proceed**, select any Ollama model (e.g., **Llama 3**), and click **OK — Update & Start Server**.
+
+---
+
+## ⚡ One-Click PowerShell Scripts (Windows)
+
+We provide dedicated one-click PowerShell scripts in the root directory:
+
+1. **Start Both (Full Stack)**:
+   ```powershell
+   .\start-all.ps1
+   ```
+   *Spawns backend and frontend in separate dedicated PowerShell windows.*
+
+2. **Start Frontend Only**:
+   ```powershell
+   .\start-frontend.ps1
+   ```
+   *Auto-installs dependencies if needed and launches the Vite dev server with browser auto-open.*
+
+3. **Start Backend Agent Only**:
+   ```powershell
+   .\start-backend.ps1
+   ```
+   *Optional ngrok exposure:*
+   ```powershell
+   .\start-backend.ps1 -NgrokToken "<your_ngrok_token>"
+   ```
+
