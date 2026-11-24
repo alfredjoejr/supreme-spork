@@ -17,6 +17,14 @@ export interface SystemMetrics {
   is_colab: boolean;
 }
 
+export interface DriveStatus {
+  mounted: boolean;
+  folder_path: string;
+  models_on_drive: boolean;
+  drive_free_gb: number;
+  drive_total_gb: number;
+}
+
 export interface InstalledModel {
   name: string;
   size_bytes: number;
@@ -42,6 +50,7 @@ export interface ServerStatusResponse {
   installed_models: InstalledModel[];
   gpu: GpuMetrics;
   system: SystemMetrics;
+  drive?: DriveStatus;
   ngrok_url?: string | null;
   uptime_seconds: number;
   last_updated_script_at?: string | null;
@@ -71,6 +80,16 @@ export interface DeployRequest {
   keep_alive: string;
   flash_attention: boolean;
   restart_server: boolean;
+  store_models_on_drive?: boolean;
+}
+
+export interface MemoryStatePayload {
+  memory_notes: string;
+  system_prompt: string;
+  messages: ChatMessage[];
+  updated_at?: string | null;
+  storage_location: string;
+  on_google_drive: boolean;
 }
 
 export interface DeployStreamEvent {

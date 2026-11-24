@@ -9,14 +9,20 @@ from fastapi.responses import StreamingResponse
 
 from .catalog_scraper import fetch_ollama_library_catalog
 from .config import BACKEND_PORT
-from .gpu_monitor import get_gpu_metrics, get_system_metrics
-from .models import ChatRequest, DeployRequest, ServerStatusResponse
+from .gpu_monitor import get_drive_status, get_gpu_metrics, get_system_metrics
+from .models import (
+    ChatRequest,
+    DeployRequest,
+    MemoryStatePayload,
+    ServerStatusResponse,
+    SummarizeMemoryRequest,
+)
 from .ollama_manager import OllamaManager
 
 app = FastAPI(
     title="Ollama Cloud Runner - Google Colab Backend",
-    description="Control agent and API gateway bridging Google Colab GPUs to the Ollama Cloud Runner frontend via ngrok.",
-    version="1.0.0",
+    description="Control agent and API gateway bridging Google Colab GPUs and Google Drive storage to the Ollama Cloud Runner frontend via ngrok.",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -69,10 +75,30 @@ async def get_server_status():
         installed_models=installed,
         gpu=get_gpu_metrics(),
         system=get_system_metrics(),
+        drive=get_drive_status(models_on_drive=manager.models_on_drive),
         ngrok_url=PUBLIC_NGROK_URL,
         uptime_seconds=int(time.time() - manager.started_at),
         last_updated_script_at=manager.last_updated_script_at,
     )
+
+
+@app.get("/api/memory", response_model=MemoryStatePayload)
+async def get_memory():
+    return manager.get_memory_state()
+
+
+@app.post("/api/memory", response_model=MemoryStatePayload)
+async def update_memory(payload: MemoryStatePayload):
+    return manager.save_memory_state(
+        memory_notes=payload.memory_notes,
+        system_prompt=payload.system_prompt,
+        messages=payload.messages,
+    )
+
+
+@app.post("/api/memory/summarize", response_model=MemoryStatePayload)
+async def summarize_to_memory(req: SummarizeMemoryRequest):
+    return await manager.summarize_chat_to_memory(req.model, req.messages)
 
 
 @app.get("/api/models/catalog")

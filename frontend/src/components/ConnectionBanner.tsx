@@ -83,7 +83,7 @@ export const ConnectionBanner: React.FC<ConnectionBannerProps> = ({
                   }}
                 >
                   <CheckCircle2 size={16} />
-                  Connected — Ready to proceed
+                  Connected — Ready to proceed {latencyMs !== null ? `(${latencyMs} ms)` : ''}
                 </span>
               ) : (
                 <span
@@ -272,9 +272,25 @@ export const ConnectionBanner: React.FC<ConnectionBannerProps> = ({
               </div>
 
               <div className="metric-item">
-                <div className="metric-label">Tunnel Health</div>
-                <div className="metric-value" style={{ fontSize: '0.84rem', color: 'var(--emerald)' }}>
-                  Online · {latencyMs ?? '—'} ms RTT
+                <div className="metric-label">Google Drive Vault</div>
+                <div
+                  className="metric-value"
+                  style={{
+                    fontSize: '0.82rem',
+                    color: status.drive?.mounted ? 'var(--emerald)' : 'var(--text-secondary)',
+                  }}
+                >
+                  {status.drive?.mounted
+                    ? `Mounted (${status.drive.drive_free_gb} GB free)`
+                    : 'Colab Disk (0 MB local)'}
+                </div>
+                <div
+                  className="mono"
+                  style={{ fontSize: '0.69rem', color: 'var(--text-muted)', marginTop: 2 }}
+                >
+                  {status.drive?.mounted
+                    ? 'MyDrive/OllamaCloudRunner'
+                    : 'Zero local bandwidth'}
                 </div>
               </div>
             </div>

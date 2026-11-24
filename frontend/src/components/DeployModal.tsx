@@ -69,6 +69,7 @@ export const DeployModal: React.FC<DeployModalProps> = ({
   const [numCtx, setNumCtx] = useState(4096);
   const [keepAlive, setKeepAlive] = useState('15m');
   const [flashAttention, setFlashAttention] = useState(true);
+  const [storeModelsOnDrive, setStoreModelsOnDrive] = useState(true);
 
   const [isDeploying, setIsDeploying] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
@@ -94,6 +95,7 @@ export const DeployModal: React.FC<DeployModalProps> = ({
           keep_alive: keepAlive,
           flash_attention: flashAttention,
           restart_server: true,
+          store_models_on_drive: storeModelsOnDrive,
         },
         (evt) => {
           if (typeof evt.progress === 'number') {
@@ -278,13 +280,21 @@ export const DeployModal: React.FC<DeployModalProps> = ({
                   </select>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', paddingTop: 22 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                    gap: 6,
+                    paddingTop: 14,
+                  }}
+                >
                   <label
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 8,
-                      fontSize: '0.85rem',
+                      fontSize: '0.83rem',
                       cursor: 'pointer',
                     }}
                   >
@@ -294,6 +304,25 @@ export const DeployModal: React.FC<DeployModalProps> = ({
                       onChange={(e) => setFlashAttention(e.target.checked)}
                     />
                     Enable CUDA Flash Attention
+                  </label>
+                  <label
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: '0.83rem',
+                      cursor: 'pointer',
+                      color: 'var(--emerald)',
+                      fontWeight: 600,
+                    }}
+                    title="Saves downloaded model blobs in /content/drive/MyDrive/OllamaCloudRunner/models on Google Drive (0 MB local disk/bandwidth)"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={storeModelsOnDrive}
+                      onChange={(e) => setStoreModelsOnDrive(e.target.checked)}
+                    />
+                    Persist in Google Drive (0 MB local)
                   </label>
                 </div>
               </div>

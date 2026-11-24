@@ -3,8 +3,8 @@ import shutil
 import subprocess
 import psutil
 
-from .config import IS_COLAB, RUNNER_DIR
-from .models import GpuMetrics, SystemMetrics
+from .config import DRIVE_APP_DIR, IS_COLAB, RUNNER_DIR, get_active_storage_dirs
+from .models import DriveStatus, GpuMetrics, SystemMetrics
 
 
 def get_gpu_metrics() -> GpuMetrics:
@@ -53,4 +53,28 @@ def get_system_metrics() -> SystemMetrics:
         disk_total_gb=round(disk.total / (1024**3), 2),
         platform_name=f"{platform.system()} {platform.release()}",
         is_colab=IS_COLAB,
+    )
+
+
+def get_drive_status(models_on_drive: bool = False) -> DriveStatus:
+    """Report Google Drive mount status and free space for /content/drive/MyDrive/OllamaCloudRunner."""
+    _, _, _, using_drive = get_active_storage_dirs()
+    if using_drive:
+        try:
+            usage = shutil.disk_usage(str(DRIVE_APP_DIR))
+            return DriveStatus(
+                mounted=True,
+                folder_path=DRIVE_APP_DIR.as_posix(),
+                models_on_drive=models_on_drive,
+                drive_free_gb=round(usage.free / (1024**3), 2),
+                drive_total_gb=round(usage.total / (1024**3), 2),
+            )
+        except Exception:
+            pass
+    return DriveStatus(
+        mounted=False,
+        folder_path=DRIVE_APP_DIR.as_posix(),
+        models_on_drive=False,
+        drive_free_gb=0.0,
+        drive_total_gb=0.0,
     )
