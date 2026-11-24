@@ -436,7 +436,7 @@ export async function fetchDriveMemory(baseUrl: string): Promise<MemoryStatePayl
 export async function saveDriveMemory(
   baseUrl: string,
   payload: Partial<MemoryStatePayload>
-): Promise<MemoryStatePayload> {
+): Promise<MemoryStatePayload & { backendOutdated?: boolean }> {
   const cleanUrl = normalizeBaseUrl(baseUrl);
   const current = getLocalCachedMemory();
   const merged: MemoryStatePayload = {
@@ -450,21 +450,27 @@ export async function saveDriveMemory(
     return { ...merged, on_google_drive: true };
   }
 
-  try {
-    const resp = await fetch(`${cleanUrl}/api/memory`, {
-      method: 'POST',
-      headers: buildHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(merged),
-    });
-    if (resp.ok) {
-      const saved = (await resp.json()) as MemoryStatePayload;
-      localStorage.setItem(LOCAL_FALLBACK_KEY, JSON.stringify(saved));
-      return saved;
-    }
-  } catch {
-    // Fallback already saved
+  const resp = await fetch(`${cleanUrl}/api/memory`, {
+    method: 'POST',
+    headers: buildHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(merged),
+  });
+
+  if (resp.status === 404) {
+    return {
+      ...merged,
+      on_google_drive: false,
+      backendOutdated: true,
+    };
   }
-  return merged;
+
+  if (!resp.ok) {
+    throw new Error(`Failed to save to Colab Drive backend (HTTP ${resp.status})`);
+  }
+
+  const saved = (await resp.json()) as MemoryStatePayload;
+  localStorage.setItem(LOCAL_FALLBACK_KEY, JSON.stringify(saved));
+  return saved;
 }
 
 export async function summarizeChatToDriveMemory(
@@ -558,11 +564,6 @@ export async function streamColabChat(
       return;
     }
     if (parsed.error) {
-      if (parsed.error.includes('check_tensor_dims')) {
-        throw new Error(
-          `Incompatible GGUF tensor shape in '${model}' (this community upload was packaged with an older llama.cpp vocab padding: 262208 vs 262145). Please switch to dolphin-llama3, hermes3, huihui_ai/qwen2.5-abliterated, or huihui_ai/deepseek-r1-abliterated.`
-        );
-      }
       throw new Error(parsed.error);
     }
     if (parsed.message?.thinking) {
