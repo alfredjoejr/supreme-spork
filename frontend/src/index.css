@@ -137,6 +137,7 @@ pre,
   font-size: 0.86rem;
   font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
   transition: all 0.15s ease;
 }
 
@@ -160,6 +161,8 @@ pre,
   border-radius: 999px;
   font-size: 0.81rem;
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
   border: 1px solid var(--border-light);
   background: var(--bg-surface);
 }
@@ -555,22 +558,51 @@ pre,
 /* Chat Playground */
 .chat-layout {
   display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 20px;
-  min-height: 540px;
+  grid-template-columns: 310px 1fr;
+  gap: 18px;
+  height: calc(100vh - 140px);
+  min-height: 520px;
+  max-height: 780px;
 }
 
-@media (max-width: 860px) {
+.chat-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg-page);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 14px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chat-main-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  height: 100%;
+}
+
+@media (max-width: 900px) {
   .chat-layout {
     grid-template-columns: 1fr;
+    height: auto;
+    max-height: none;
+  }
+  .chat-messages {
+    min-height: 420px;
+    max-height: 520px;
   }
 }
 
 .chat-messages {
   flex: 1;
-  padding: 20px;
+  min-height: 0;
+  padding: 18px 20px;
   overflow-y: auto;
-  max-height: 460px;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 14px;

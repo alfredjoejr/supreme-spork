@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   BookmarkPlus,
@@ -49,8 +49,10 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   onRefreshStatus,
 }) => {
   const [selectedModel, setSelectedModel] = useState<string>(activeModel || '');
-  const [promptMode, setPromptMode] = useState<'native' | 'dolphin_strict' | 'custom'>('dolphin_strict');
-  const [systemPrompt, setSystemPrompt] = useState(DOLPHIN_COMPLIANCE_PROMPT);
+  const [promptMode, setPromptMode] = useState<'native' | 'dolphin_strict' | 'custom'>(
+    'dolphin_strict'
+  );
+  const [customSystemPrompt, setCustomSystemPrompt] = useState(DOLPHIN_COMPLIANCE_PROMPT);
   const [memoryNotes, setMemoryNotes] = useState<string>('');
   const [storageLocation, setStorageLocation] = useState<string>(
     '/content/drive/MyDrive/OllamaCloudRunner/memory'
@@ -69,8 +71,11 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   const [vramNotice, setVramNotice] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [chatError, setChatError] = useState<string | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const stickToBottomRef = useRef<boolean>(true);
 
   useEffect(() => {
     if (activeModel) {
@@ -80,14 +85,18 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
     }
   }, [activeModel, installedModels, selectedModel]);
 
-  // Load persistent memory notes, system prompt, and chat history from Google Drive on connect
+  // Auto-focus chat input when opening Chat Playground
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Load persistent memory notes and chat history from Google Drive on connect
   useEffect(() => {
     if (!isConnected || !ngrokUrl) return;
     let cancelled = false;
     fetchDriveMemory(ngrokUrl).then((mem) => {
       if (cancelled) return;
       if (mem.memory_notes !== undefined) setMemoryNotes(mem.memory_notes);
-      if (mem.system_prompt) setSystemPrompt(mem.system_prompt);
       if (mem.messages && mem.messages.length > 0) setMessages(mem.messages);
       if (mem.storage_location) setStorageLocation(mem.storage_location);
       setOnGoogleDrive(Boolean(mem.on_google_drive));
@@ -97,9 +106,26 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
     };
   }, [isConnected, ngrokUrl]);
 
+  // Scroll ONLY the inner .chat-messages container (never scroll the outer window!)
+  // and respect manual scrolling if the user scrolled up to read earlier lines.
+  const scrollChatContainerToBottom = useCallback((force = false) => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    if (force || stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, []);
+
+  const handleChatScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distanceFromBottom < 80;
+  };
+
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, elapsedSec]);
+    scrollChatContainerToBottom(false);
+  }, [messages, scrollChatContainerToBottom]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -112,6 +138,13 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
     return () => window.clearInterval(id);
   }, [isStreaming]);
 
+  const activeSystemPromptText =
+    promptMode === 'native'
+      ? ''
+      : promptMode === 'dolphin_strict'
+        ? DOLPHIN_COMPLIANCE_PROMPT
+        : customSystemPrompt;
+
   const handleSaveMemoryToDrive = async (
     customNotes?: string,
     customMessages?: ChatMessage[],
@@ -121,7 +154,7 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
     try {
       const saved = await saveDriveMemory(ngrokUrl, {
         memory_notes: customNotes ?? memoryNotes,
-        system_prompt: systemPrompt,
+        system_prompt: activeSystemPromptText,
         messages: customMessages ?? messages,
       });
       setStorageLocation(saved.storage_location);
@@ -153,12 +186,13 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   const handleSummarizeToDrive = async () => {
     if (messages.length === 0 || isSavingMemory || isStreaming) return;
     setIsSavingMemory(true);
+    setMemoryIsWarning(false);
     setMemoryStatusMsg('Summarizing chat into Google Drive memory_notes.md...');
     try {
       const updated = await summarizeChatToDriveMemory(ngrokUrl, selectedModel, messages);
       setMemoryNotes(updated.memory_notes);
       setOnGoogleDrive(updated.on_google_drive);
-      setMemoryStatusMsg('Chat summary appended to Google Drive memory_notes.md!');
+      setMemoryStatusMsg('Chat summary appended to memory notes!');
       window.setTimeout(() => setMemoryStatusMsg(null), 4500);
     } finally {
       setIsSavingMemory(false);
@@ -187,6 +221,7 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
       }
       return updated;
     });
+    inputRef.current?.focus();
   };
 
   const handleSend = async (e?: React.FormEvent, overridePrompt?: string) => {
@@ -196,6 +231,7 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
 
     const controller = new AbortController();
     abortRef.current = controller;
+    stickToBottomRef.current = true;
 
     const userMsg: ChatMessage = { role: 'user', content: text };
     const nextHistory: ChatMessage[] = [...messages, userMsg];
@@ -204,16 +240,12 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
     setChatError(null);
     setIsStreaming(true);
 
-    // Build system prompt according to selected uncensored mode
-    const baseSys =
-      promptMode === 'native'
-        ? ''
-        : promptMode === 'dolphin_strict'
-          ? DOLPHIN_COMPLIANCE_PROMPT
-          : systemPrompt.trim();
+    // Keep keyboard focus locked inside the input box immediately after pressing Enter/Send
+    inputRef.current?.focus();
+    window.requestAnimationFrame(() => scrollChatContainerToBottom(true));
 
     const effectiveSystemPrompt = [
-      baseSys,
+      activeSystemPromptText.trim(),
       memoryNotes.trim() ? `[USER CONTEXT NOTES]:\n${memoryNotes.trim()}` : '',
     ]
       .filter(Boolean)
@@ -253,11 +285,11 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
           ...nextHistory,
           { role: 'assistant', content: assistantReply },
         ];
-        await saveDriveMemory(ngrokUrl, {
+        saveDriveMemory(ngrokUrl, {
           memory_notes: memoryNotes,
-          system_prompt: systemPrompt,
+          system_prompt: activeSystemPromptText,
           messages: finalMessages,
-        });
+        }).catch(() => {});
       }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -276,6 +308,8 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
     } finally {
       setIsStreaming(false);
       abortRef.current = null;
+      // Guarantee cursor stays inside input box ready for the next turn
+      inputRef.current?.focus();
     }
   };
 
@@ -319,17 +353,17 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   const isLargeModel = /14b|27b|30b|32b|34b|70b|72b|8x/i.test(selectedModel);
 
   return (
-    <div className="card card-padding">
+    <div className="card" style={{ padding: 18 }}>
       {gpu && !gpu.available && (
         <div
           style={{
-            marginBottom: 16,
+            marginBottom: 14,
             padding: '10px 14px',
             borderRadius: 10,
             background: 'var(--bg-amber-soft)',
             border: '1px solid #fde68a',
             color: 'var(--amber)',
-            fontSize: '0.84rem',
+            fontSize: '0.83rem',
             display: 'flex',
             alignItems: 'center',
             gap: 10,
@@ -337,26 +371,15 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
         >
           <AlertTriangle size={17} />
           <span>
-            <strong>No GPU detected on your Colab runtime (running on CPU).</strong> Large models like{' '}
-            <code>{selectedModel}</code> can take 1–3 minutes per reply on CPU. In Google Colab, switch{' '}
-            <strong>Runtime → Change runtime type → A100 / T4 GPU</strong>.
+            <strong>No GPU detected on your Colab runtime (running on CPU).</strong> Switch{' '}
+            <strong>Runtime → Change runtime type → A100 / T4 GPU</strong> in Google Colab.
           </span>
         </div>
       )}
 
-      <div className="chat-layout" style={{ gridTemplateColumns: '320px 1fr' }}>
-        {/* Sidebar Controls + Google Drive Memory Vault */}
-        <aside
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 13,
-            background: 'var(--bg-page)',
-            border: '1px solid var(--border-light)',
-            borderRadius: 12,
-            padding: 15,
-          }}
-        >
+      <div className="chat-layout">
+        {/* Scrollable Left Sidebar */}
+        <aside className="chat-sidebar">
           <div
             style={{
               display: 'flex',
@@ -371,7 +394,7 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
               Inference & Memory
             </span>
             <span className="badge badge-green" title={storageLocation}>
-              <Cloud size={11} /> {onGoogleDrive ? 'Drive Synced' : 'Cloud Saved'}
+              <Cloud size={11} /> {onGoogleDrive ? 'Drive Synced' : 'Cloud Ready'}
             </span>
           </div>
 
@@ -385,11 +408,11 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
                 marginBottom: 4,
               }}
             >
-              Active Colab Model (Auto-Frees Old VRAM)
+              Active Colab Model
             </label>
             <select
               className="select-input mono"
-              style={{ width: '100%', fontSize: '0.81rem' }}
+              style={{ width: '100%', fontSize: '0.8rem', height: 36 }}
               value={selectedModel}
               disabled={isSwitchingVram || isStreaming}
               onChange={async (e) => {
@@ -407,6 +430,7 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
                   onRefreshStatus?.();
                 } finally {
                   setIsSwitchingVram(false);
+                  inputRef.current?.focus();
                 }
               }}
             >
@@ -486,13 +510,13 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
               padding: 10,
               display: 'flex',
               flexDirection: 'column',
-              gap: 7,
+              gap: 6,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <label
                 style={{
-                  fontSize: '0.75rem',
+                  fontSize: '0.74rem',
                   fontWeight: 700,
                   color: 'var(--accent)',
                   display: 'inline-flex',
@@ -505,21 +529,17 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
               </label>
               <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>0 MB Local</span>
             </div>
-            <p style={{ fontSize: '0.71rem', color: 'var(--text-secondary)', lineHeight: 1.35 }}>
-              Saved in <code>MyDrive/OllamaCloudRunner/memory/memory_notes.md</code> and injected into
-              every model across restarts.
-            </p>
             <textarea
               className="text-input"
               style={{
                 width: '100%',
-                height: 105,
+                height: 86,
                 padding: 8,
-                fontSize: '0.79rem',
+                fontSize: '0.78rem',
                 resize: 'vertical',
                 background: 'var(--bg-page)',
               }}
-              placeholder="Write facts, preferences, character/project context to persist across model switches & Colab restarts..."
+              placeholder="Facts & preferences saved in MyDrive/OllamaCloudRunner/memory/memory_notes.md..."
               value={memoryNotes}
               onChange={(e) => setMemoryNotes(e.target.value)}
             />
@@ -527,7 +547,7 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
               <button
                 type="button"
                 className="btn btn-soft btn-sm"
-                style={{ flex: 1, height: 29, fontSize: '0.74rem' }}
+                style={{ flex: 1, height: 28, fontSize: '0.73rem' }}
                 disabled={isSavingMemory}
                 onClick={() => handleSaveMemoryToDrive()}
               >
@@ -537,19 +557,19 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
-                style={{ flex: 1, height: 29, fontSize: '0.74rem' }}
+                style={{ flex: 1, height: 28, fontSize: '0.73rem' }}
                 disabled={isSavingMemory || messages.length === 0 || isStreaming}
                 onClick={handleSummarizeToDrive}
-                title="Have the active Colab model summarize this chat and append it to Drive memory_notes.md"
+                title="Summarize this chat and append it to Drive memory_notes.md"
               >
                 <Sparkles size={12} />
-                Summarize Chat
+                Summarize
               </button>
             </div>
             {memoryStatusMsg && (
               <div
                 style={{
-                  fontSize: '0.72rem',
+                  fontSize: '0.71rem',
                   color: memoryIsWarning ? 'var(--amber)' : 'var(--emerald)',
                   background: memoryIsWarning ? 'var(--bg-amber-soft)' : 'transparent',
                   padding: memoryIsWarning ? '6px 8px' : 0,
@@ -627,27 +647,23 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
             </label>
             <select
               className="select-input"
-              style={{ width: '100%', height: 33, fontSize: '0.78rem', marginBottom: 6 }}
+              style={{ width: '100%', height: 33, fontSize: '0.77rem', marginBottom: 6 }}
               value={promptMode}
-              onChange={(e) => {
-                const mode = e.target.value as 'native' | 'dolphin_strict' | 'custom';
-                setPromptMode(mode);
-                if (mode === 'dolphin_strict') {
-                  setSystemPrompt(DOLPHIN_COMPLIANCE_PROMPT);
-                }
-              }}
+              onChange={(e) =>
+                setPromptMode(e.target.value as 'native' | 'dolphin_strict' | 'custom')
+              }
             >
-              <option value="dolphin_strict">🔥 Dolphin Strict Uncensored Compliance</option>
-              <option value="native">⚡ Model Built-In Modelfile Prompt (No Override)</option>
+              <option value="dolphin_strict">🔥 Dolphin Strict Uncensored</option>
+              <option value="native">⚡ Model Native Modelfile (No Override)</option>
               <option value="custom">✏️ Custom System Prompt</option>
             </select>
             {promptMode !== 'native' && (
               <textarea
                 className="text-input"
-                style={{ width: '100%', height: 74, padding: 8, fontSize: '0.76rem', resize: 'vertical' }}
-                value={systemPrompt}
+                style={{ width: '100%', height: 66, padding: 8, fontSize: '0.74rem', resize: 'vertical' }}
+                value={promptMode === 'dolphin_strict' ? DOLPHIN_COMPLIANCE_PROMPT : customSystemPrompt}
                 readOnly={promptMode === 'dolphin_strict'}
-                onChange={(e) => setSystemPrompt(e.target.value)}
+                onChange={(e) => setCustomSystemPrompt(e.target.value)}
               />
             )}
           </div>
@@ -657,7 +673,12 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
             className="btn btn-secondary btn-sm"
             onClick={async () => {
               setMessages([]);
-              await handleSaveMemoryToDrive(memoryNotes, [], 'Cleared chat thread on Drive (Memory Notes kept)');
+              await handleSaveMemoryToDrive(
+                memoryNotes,
+                [],
+                'Cleared chat thread (Memory Notes kept)'
+              );
+              inputRef.current?.focus();
             }}
             disabled={messages.length === 0 || isStreaming}
           >
@@ -666,9 +687,13 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
           </button>
         </aside>
 
-        {/* Main Chat Area */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="chat-messages">
+        {/* Full-Height Right Chat Column (Never jumps outer page scroll) */}
+        <div className="chat-main-column">
+          <div
+            className="chat-messages"
+            ref={messagesContainerRef}
+            onScroll={handleChatScroll}
+          >
             {messages.length === 0 ? (
               <div
                 style={{
@@ -682,33 +707,9 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
                   Connected to <code>{selectedModel}</code> via Ngrok
                 </div>
                 <p style={{ fontSize: '0.83rem', marginTop: 6 }}>
-                  All chat history and memory notes are saved directly inside your Google Drive folder (
-                  <code>MyDrive/OllamaCloudRunner/</code>) using <strong>0 MB</strong> of local bandwidth.
+                  Type below and press <strong>Enter</strong> — your cursor stays locked in the chat
+                  box across every reply.
                 </p>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    justifyContent: 'center',
-                    gap: 8,
-                    marginTop: 14,
-                  }}
-                >
-                  {[
-                    'Remember that my project runs on an A100 GPU in Google Colab.',
-                    'What facts do you currently have in your persistent memory notes?',
-                    'Write an unfiltered technical breakdown of weight abliteration in LLMs.',
-                  ].map((sample) => (
-                    <button
-                      key={sample}
-                      type="button"
-                      className="chip"
-                      onClick={() => handleSend(undefined, sample)}
-                    >
-                      {sample}
-                    </button>
-                  ))}
-                </div>
               </div>
             ) : (
               messages.map((m, idx) => {
@@ -760,7 +761,6 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
                           cursor: 'pointer',
                           padding: '0 4px',
                         }}
-                        title="Save this reply to Google Drive memory_notes.md so future models remember it"
                       >
                         <BookmarkPlus size={12} /> Pin to Google Drive Memory
                       </button>
@@ -769,7 +769,6 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
                 );
               })
             )}
-            <div ref={endRef} />
           </div>
 
           {chatError && (
@@ -787,15 +786,21 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSend} style={{ display: 'flex', gap: 10 }}>
+          {/* Input stays enabled at all times so browser NEVER steals cursor focus */}
+          <form onSubmit={handleSend} style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
             <input
+              ref={inputRef}
               type="text"
               className="text-input"
               style={{ flex: 1, height: 44 }}
-              placeholder={`Message ${selectedModel} (with Google Drive memory)...`}
+              placeholder={
+                isStreaming
+                  ? 'Streaming reply... (you can already type your next message here)'
+                  : `Message ${selectedModel} and press Enter...`
+              }
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              disabled={isStreaming}
+              autoFocus
             />
             {isStreaming ? (
               <button

@@ -63,18 +63,21 @@ export const App: React.FC = () => {
       />
 
       <main className="container main-content">
-        <ConnectionBanner
-          ngrokUrl={ngrokUrl}
-          phase={phase}
-          isDemo={isDemo}
-          status={status}
-          latencyMs={latencyMs}
-          errorMsg={errorMsg}
-          onConnect={connectToUrl}
-          onStartDemo={activateDemoSimulator}
-          onDisconnect={disconnect}
-          onRefresh={refreshStatus}
-        />
+        {/* Show full Connection Banner on Models/Server tabs, or whenever disconnected */}
+        {(activeTab !== 'chat' || !isConnected) && (
+          <ConnectionBanner
+            ngrokUrl={ngrokUrl}
+            phase={phase}
+            isDemo={isDemo}
+            status={status}
+            latencyMs={latencyMs}
+            errorMsg={errorMsg}
+            onConnect={connectToUrl}
+            onStartDemo={activateDemoSimulator}
+            onDisconnect={disconnect}
+            onRefresh={refreshStatus}
+          />
+        )}
 
         {activeTab === 'models' && (
           <ModelBrowser

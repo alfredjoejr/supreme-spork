@@ -53,8 +53,19 @@ export const Header: React.FC<HeaderProps> = ({
             <MessageSquare size={15} />
             Chat Playground
             {activeModel && (
-              <span className="badge badge-green" style={{ marginLeft: 4 }}>
-                {activeModel}
+              <span
+                className="badge badge-green mono"
+                style={{
+                  marginLeft: 4,
+                  maxWidth: 165,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  display: 'inline-block',
+                }}
+                title={activeModel}
+              >
+                {activeModel.split('/').pop()}
               </span>
             )}
           </button>
