@@ -191,9 +191,9 @@ export const DeployModal: React.FC<DeployModalProps> = ({
           )}
         </div>
 
-        {/* Body */}
-        <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {!isDeploying && !isFinished && (
+        {/* Body (Scrollable so it never clips off screen) */}
+        <div className="modal-body-scroll">
+          {!isDeploying && !isFinished && milestones.length === 0 && !deployError && (
             <>
               <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
                 Clicking <strong>OK — Update & Start Server</strong> will rewrite{' '}
@@ -506,7 +506,7 @@ ollama pull "${modelTag}"`}</pre>
           )}
         </div>
 
-        {/* Footer */}
+        {/* Footer (Always pinned at bottom of modal) */}
         <div
           style={{
             padding: '14px 22px',
@@ -515,9 +515,10 @@ ollama pull "${modelTag}"`}</pre>
             display: 'flex',
             justifyContent: 'flex-end',
             gap: 10,
+            flexShrink: 0,
           }}
         >
-          {!isDeploying && !isFinished && (
+          {!isDeploying && !isFinished && milestones.length === 0 && !deployError && (
             <>
               <button type="button" className="btn btn-secondary" onClick={onClose}>
                 Cancel
@@ -526,6 +527,34 @@ ollama pull "${modelTag}"`}</pre>
                 OK — Update & Start Server
               </button>
             </>
+          )}
+
+          {!isDeploying && !isFinished && (milestones.length > 0 || deployError) && (
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setMilestones([]);
+                  setPullState(null);
+                  setDeployError(null);
+                }}
+              >
+                Edit Settings
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={onClose}>
+                Close
+              </button>
+              <button type="button" className="btn btn-primary" onClick={handleConfirmOk}>
+                Retry Deploy
+              </button>
+            </>
+          )}
+
+          {isDeploying && (
+            <button type="button" className="btn btn-secondary" onClick={onClose}>
+              Hide (Runs in Background)
+            </button>
           )}
 
           {isFinished && (
