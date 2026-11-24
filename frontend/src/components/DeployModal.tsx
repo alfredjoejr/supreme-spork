@@ -1,5 +1,12 @@
-import React, { useState } from 'react';
-import { CheckCircle2, Loader2, MessageSquare, Server, Terminal, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import {
+  CheckCircle2,
+  DownloadCloud,
+  Loader2,
+  MessageSquare,
+  Server,
+  X,
+} from 'lucide-react';
 import { deployModelToColab } from '../services/colabApi';
 import { DeployStreamEvent } from '../types/api';
 import { OLLAMA_ENGINE_VERSIONS } from '../data/fallbackCatalog';
@@ -11,6 +18,43 @@ interface DeployModalProps {
   initialOllamaVersion: string;
   onClose: () => void;
   onDeployedReady: (deployedModel: string) => void;
+}
+
+interface PullLayerState {
+  label: string;
+  sizeDetail: string;
+  percent: number;
+}
+
+function parsePullMessage(evt: DeployStreamEvent): PullLayerState {
+  const pct =
+    typeof evt.download_percent === 'number'
+      ? evt.download_percent
+      : (() => {
+          const m = evt.message.match(/\(([\d.]+)%\)/);
+          return m ? parseFloat(m[1]) : 0;
+        })();
+
+  // Expected format: "pulling 1eee69535308: 4642.8 MB / 4692.8 MB (98.9%)"
+  const colonIdx = evt.message.indexOf(':');
+  if (colonIdx !== -1) {
+    const label = evt.message.slice(0, colonIdx).trim();
+    const rest = evt.message
+      .slice(colonIdx + 1)
+      .replace(/\([\d.]+%\)/, '')
+      .trim();
+    return {
+      label,
+      sizeDetail: rest,
+      percent: Math.min(100, Math.max(0, pct)),
+    };
+  }
+
+  return {
+    label: 'Downloading model weights',
+    sizeDetail: evt.message,
+    percent: Math.min(100, Math.max(0, pct)),
+  };
 }
 
 export const DeployModal: React.FC<DeployModalProps> = ({
@@ -29,13 +73,15 @@ export const DeployModal: React.FC<DeployModalProps> = ({
   const [isDeploying, setIsDeploying] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [events, setEvents] = useState<DeployStreamEvent[]>([]);
+  const [milestones, setMilestones] = useState<DeployStreamEvent[]>([]);
+  const [pullState, setPullState] = useState<PullLayerState | null>(null);
   const [deployError, setDeployError] = useState<string | null>(null);
 
   const handleConfirmOk = async () => {
     setIsDeploying(true);
     setDeployError(null);
-    setEvents([]);
+    setMilestones([]);
+    setPullState(null);
     setProgress(5);
 
     try {
@@ -50,15 +96,39 @@ export const DeployModal: React.FC<DeployModalProps> = ({
           restart_server: true,
         },
         (evt) => {
-          setEvents((prev) => [...prev.slice(-18), evt]);
           if (typeof evt.progress === 'number') {
             setProgress(evt.progress);
           }
+
+          if (evt.step === 'pull_progress') {
+            setPullState(parsePullMessage(evt));
+          } else if (evt.step === 'pull_status') {
+            setPullState((prev) => ({
+              label: evt.message,
+              sizeDetail: prev?.sizeDetail || '',
+              percent: prev?.percent ?? 100,
+            }));
+          } else {
+            // Deduplicate milestone steps in-place instead of flooding new lines
+            setMilestones((prev) => {
+              const existingIdx = prev.findIndex((item) => item.step === evt.step);
+              if (existingIdx !== -1) {
+                const updated = [...prev];
+                updated[existingIdx] = evt;
+                return updated;
+              }
+              return [...prev, evt];
+            });
+          }
+
           if (evt.step === 'error') {
             setDeployError(evt.message);
             setIsDeploying(false);
           }
           if (evt.step === 'ready') {
+            setPullState((prev) =>
+              prev ? { ...prev, label: 'Download complete', percent: 100 } : null
+            );
             setIsFinished(true);
             setIsDeploying(false);
           }
@@ -69,6 +139,17 @@ export const DeployModal: React.FC<DeployModalProps> = ({
       setIsDeploying(false);
     }
   };
+
+  const activeStageText = useMemo(() => {
+    if (isFinished) return `Colab Server Live with ${modelTag}!`;
+    if (milestones.some((m) => m.step === 'warming_up')) {
+      return `Loading ${modelTag} weights into Colab GPU VRAM...`;
+    }
+    if (pullState) {
+      return `Pulling ${modelTag} onto Google Colab...`;
+    }
+    return 'Updating Colab backend & starting Ollama daemon...';
+  }, [isFinished, milestones, modelTag, pullState]);
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -115,8 +196,8 @@ export const DeployModal: React.FC<DeployModalProps> = ({
               <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
                 Clicking <strong>OK — Update & Start Server</strong> will rewrite{' '}
                 <code>/content/ollama_runner/start_ollama.sh</code> on your Google Colab machine,
-                verify the Ollama engine version, start <code>ollama serve</code>, pull{' '}
-                <code>{modelTag}</code> onto the Colab GPU, and connect it to this frontend via ngrok.
+                start <code>ollama serve</code>, pull <code>{modelTag}</code> onto the Colab GPU,
+                and connect it to this frontend via ngrok.
               </p>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -164,11 +245,11 @@ export const DeployModal: React.FC<DeployModalProps> = ({
                     value={numCtx}
                     onChange={(e) => setNumCtx(Number(e.target.value))}
                   >
-                    <option value={2048}>2,048 tokens (Low VRAM)</option>
-                    <option value={4096}>4,096 tokens (Balanced T4)</option>
+                    <option value={2048}>2,048 tokens (Fastest)</option>
+                    <option value={4096}>4,096 tokens (Balanced)</option>
                     <option value={8192}>8,192 tokens</option>
-                    <option value={16384}>16,384 tokens</option>
-                    <option value={32768}>32,768 tokens (High VRAM)</option>
+                    <option value={16384}>16,384 tokens (A100 Recommended)</option>
+                    <option value={32768}>32,768 tokens (High VRAM A100)</option>
                   </select>
                 </div>
 
@@ -228,7 +309,7 @@ export const DeployModal: React.FC<DeployModalProps> = ({
                 >
                   Colab Server Script Preview (<code>start_ollama.sh</code>):
                 </div>
-                <pre className="light-code-block" style={{ maxHeight: 150 }}>{`export OLLAMA_HOST="127.0.0.1:11434"
+                <pre className="light-code-block" style={{ maxHeight: 140 }}>{`export OLLAMA_HOST="127.0.0.1:11434"
 export OLLAMA_ORIGINS="*"
 export OLLAMA_NUM_CTX="${numCtx}"
 export OLLAMA_KEEP_ALIVE="${keepAlive}"
@@ -239,55 +320,141 @@ ollama pull "${modelTag}"`}</pre>
             </>
           )}
 
-          {/* Streaming Progress View */}
-          {(isDeploying || isFinished || events.length > 0) && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: '0.88rem',
-                    fontWeight: 600,
-                    color: isFinished ? 'var(--emerald)' : 'var(--accent)',
-                  }}
-                >
-                  {isDeploying && <Loader2 size={16} className="spin" />}
-                  {isFinished && <CheckCircle2 size={17} />}
-                  {isFinished
-                    ? `Colab Server Live with ${modelTag}!`
-                    : 'Updating Colab backend & pulling model...'}
-                </span>
-                <span className="mono" style={{ fontSize: '0.82rem', fontWeight: 600 }}>
-                  {progress}%
-                </span>
-              </div>
-
-              <div className="progress-track" style={{ height: 9 }}>
-                <div
-                  className={`progress-fill ${isFinished ? 'emerald' : ''}`}
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-
-              <div className="light-code-block" style={{ maxHeight: 210 }}>
+          {/* Clean In-Place Progress View (No multi-line spam) */}
+          {(isDeploying || isFinished || milestones.length > 0 || pullState) && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Overall Deployment Progress Bar */}
+              <div>
                 <div
                   style={{
                     display: 'flex',
+                    justifyContent: 'space-between',
                     alignItems: 'center',
-                    gap: 6,
-                    color: 'var(--text-muted)',
                     marginBottom: 6,
-                    fontSize: '0.75rem',
                   }}
                 >
-                  <Terminal size={13} /> Live Colab Ngrok Stream
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: '0.9rem',
+                      fontWeight: 600,
+                      color: isFinished ? 'var(--emerald)' : 'var(--accent)',
+                    }}
+                  >
+                    {isDeploying && <Loader2 size={16} className="spin" />}
+                    {isFinished && <CheckCircle2 size={17} />}
+                    {activeStageText}
+                  </span>
+                  <span className="mono" style={{ fontSize: '0.82rem', fontWeight: 700 }}>
+                    {progress}%
+                  </span>
                 </div>
-                {events.map((ev, i) => (
-                  <div key={i} style={{ padding: '2px 0' }}>
-                    <span style={{ color: 'var(--accent)', fontWeight: 600 }}>[{ev.step}]</span>{' '}
-                    <span>{ev.message}</span>
+
+                <div className="progress-track" style={{ height: 10 }}>
+                  <div
+                    className={`progress-fill ${isFinished ? 'emerald' : ''}`}
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Dedicated In-Place Layer Download Progress Bar */}
+              {pullState && (
+                <div
+                  style={{
+                    background: 'var(--bg-accent-soft)',
+                    border: '1px solid #bfdbfe',
+                    borderRadius: 10,
+                    padding: '12px 14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 10,
+                      fontSize: '0.81rem',
+                    }}
+                  >
+                    <span
+                      className="mono"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontWeight: 600,
+                        color: 'var(--accent)',
+                      }}
+                    >
+                      <DownloadCloud size={15} />
+                      {pullState.label}
+                    </span>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {pullState.sizeDetail && (
+                        <span className="mono" style={{ color: 'var(--text-secondary)' }}>
+                          {pullState.sizeDetail}
+                        </span>
+                      )}
+                      <span
+                        className="badge badge-blue mono"
+                        style={{ minWidth: 54, justifyContent: 'center' }}
+                      >
+                        {pullState.percent.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div
+                    className="progress-track"
+                    style={{ height: 7, background: '#dbeafe', marginTop: 0 }}
+                  >
+                    <div
+                      className={`progress-fill ${pullState.percent >= 100 ? 'emerald' : ''}`}
+                      style={{ width: `${pullState.percent}%`, transition: 'width 0.2s ease' }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Compact Step Checklist (1 line per stage, no duplicate lines) */}
+              <div
+                style={{
+                  background: 'var(--bg-page)',
+                  border: '1px solid var(--border-light)',
+                  borderRadius: 10,
+                  padding: '10px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                {milestones.map((ev) => (
+                  <div
+                    key={ev.step}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: '0.81rem',
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    <CheckCircle2
+                      size={14}
+                      color={ev.step === 'error' ? 'var(--rose)' : 'var(--emerald)'}
+                      style={{ flexShrink: 0 }}
+                    />
+                    <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--accent)' }}>
+                      [{ev.step}]
+                    </span>
+                    <span style={{ color: 'var(--text-primary)' }}>{ev.message}</span>
                   </div>
                 ))}
               </div>
