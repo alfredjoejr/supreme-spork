@@ -567,7 +567,7 @@ export async function streamColabChat(
       throw new Error(parsed.error);
     }
     if (parsed.message?.thinking) {
-      onToken(parsed.message.thinking);
+      onToken(`<think>${parsed.message.thinking}</think>`);
     }
     if (parsed.message?.content) {
       onToken(parsed.message.content);

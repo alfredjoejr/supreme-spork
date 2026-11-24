@@ -642,7 +642,43 @@ pre,
   }
 }
 
-.spin {
-  animation: spin 1s linear infinite;
+/* Thought Disclosure for Reasoning Models (DeepSeek-R1, etc.) */
+.thought-disclosure {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  margin-bottom: 8px;
+  overflow: hidden;
 }
+
+.thought-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  background: #f1f5f9;
+}
+
+.thought-summary:hover {
+  color: var(--text-primary);
+  background: #e2e8f0;
+}
+
+.thought-body {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #64748b;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: pre-wrap;
+  border-top: 1px solid #e2e8f0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 
