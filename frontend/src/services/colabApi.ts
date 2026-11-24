@@ -153,8 +153,29 @@ export async function fetchModelCatalog(baseUrl: string): Promise<CatalogModel[]
   if (!resp.ok) {
     return FALLBACK_CATALOG;
   }
-  const payload = (await resp.json()) as { models?: CatalogModel[] };
-  return payload.models && payload.models.length > 0 ? payload.models : FALLBACK_CATALOG;
+  const payload = (await resp.json()) as {
+    models?: CatalogModel[];
+    installed?: { name: string }[];
+  };
+  const remoteModels = payload.models ?? [];
+  const installedBases = new Set(
+    (payload.installed ?? []).map((m) => m.name.split(':')[0])
+  );
+
+  // Always prioritize our curated Uncensored & A100 High-VRAM catalog at the top,
+  // then append any additional live-discovered Ollama library models from Colab.
+  const seen = new Set<string>();
+  const merged: CatalogModel[] = [];
+
+  for (const item of [...FALLBACK_CATALOG, ...remoteModels]) {
+    if (seen.has(item.name)) continue;
+    seen.add(item.name);
+    merged.push({
+      ...item,
+      is_installed: item.is_installed || installedBases.has(item.name),
+    });
+  }
+  return merged;
 }
 
 export async function fetchRunnerCode(baseUrl: string): Promise<RunnerCodeResponse> {
