@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Check, Cpu, Download, Rocket, Search, Sparkles } from 'lucide-react';
+import { Check, Cpu, Download, Flame, Rocket, Search, Sparkles, Zap } from 'lucide-react';
 import { CatalogModel, InstalledModel } from '../types/api';
-import { OLLAMA_ENGINE_VERSIONS } from '../data/fallbackCatalog';
 
 interface ModelBrowserProps {
   models: CatalogModel[];
@@ -14,13 +13,12 @@ interface ModelBrowserProps {
 }
 
 const CATEGORIES = [
+  { id: 'uncensored', label: '🔥 Uncensored & Abliterated' },
+  { id: 'high_vram', label: '⚡ A100 High-VRAM (27B–72B+)' },
   { id: 'all', label: 'All Models' },
-  { id: 'featured', label: 'Featured for Colab' },
-  { id: 'general', label: 'General / Chat' },
   { id: 'reasoning', label: 'Reasoning' },
   { id: 'coding', label: 'Coding' },
   { id: 'vision', label: 'Vision' },
-  { id: 'embedding', label: 'Embeddings' },
   { id: 'installed', label: 'Installed on Colab' },
 ];
 
@@ -29,13 +27,12 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
   installedModels,
   activeModel,
   isConnected,
-  selectedOllamaVersion,
-  onChangeOllamaVersion,
   onRequestDeploy,
 }) => {
   const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('all');
+  const [category, setCategory] = useState('uncensored');
   const [selectedTags, setSelectedTags] = useState<Record<string, string>>({});
+  const [quickPickModel, setQuickPickModel] = useState<string>('dolphin-llama3:70b');
   const [customModelInput, setCustomModelInput] = useState('');
 
   const installedSet = useMemo(() => {
@@ -46,16 +43,36 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
     return new Set(installedModels.map((m) => m.name.split(':')[0]));
   }, [installedModels]);
 
+  // Quick-launch dropdown options covering top uncensored & A100 models
+  const quickLaunchOptions = useMemo(() => {
+    const opts: { tag: string; label: string }[] = [];
+    for (const m of models) {
+      const defTag = m.default_tag === 'latest' ? m.name : `${m.name}:${m.default_tag}`;
+      const prefix = m.uncensored ? '🔥 [Uncensored] ' : '';
+      opts.push({
+        tag: defTag,
+        label: `${prefix}${m.title} (${defTag})`,
+      });
+    }
+    return opts;
+  }, [models]);
+
   const filteredModels = useMemo(() => {
     const q = search.trim().toLowerCase();
     return models.filter((m) => {
-      if (category === 'featured' && !m.featured) return false;
+      if (category === 'uncensored' && !m.uncensored && m.category !== 'uncensored') {
+        return false;
+      }
+      if (category === 'high_vram' && !m.high_vram) {
+        return false;
+      }
       if (category === 'installed' && !m.is_installed && !installedBaseSet.has(m.name)) {
         return false;
       }
       if (
         category !== 'all' &&
-        category !== 'featured' &&
+        category !== 'uncensored' &&
+        category !== 'high_vram' &&
         category !== 'installed' &&
         m.category !== category
       ) {
@@ -73,16 +90,26 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
 
   const getTagForModel = (m: CatalogModel) => selectedTags[m.name] || m.default_tag || 'latest';
 
-  const handleCustomDeploy = (e: React.FormEvent) => {
+  // Effective target for the top Quick Launch bar: either the typed custom tag OR the selected dropdown model
+  const activeQuickLaunchTarget = customModelInput.trim() || quickPickModel;
+
+  const handleQuickLaunch = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleaned = customModelInput.trim();
-    if (!cleaned) return;
-    onRequestDeploy(cleaned, cleaned);
+    if (!activeQuickLaunchTarget) return;
+    const matched = models.find(
+      (m) =>
+        m.name === activeQuickLaunchTarget ||
+        `${m.name}:${m.default_tag}` === activeQuickLaunchTarget
+    );
+    onRequestDeploy(
+      activeQuickLaunchTarget,
+      matched ? matched.title : activeQuickLaunchTarget
+    );
   };
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      {/* Step 2 Header & Global Ollama Engine Selector + Custom Model Tag Bar */}
+      {/* Step 2 Header & Working Quick-Select Dropdown + Custom Tag Launcher */}
       <div className="card card-padding">
         <div
           style={{
@@ -94,84 +121,110 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
           }}
         >
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="badge badge-blue">Step 2 · Choose Ollama Model & Version</span>
-              <span style={{ fontSize: '0.81rem', color: 'var(--text-muted)' }}>
-                {models.length} library models available
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span className="badge badge-blue">Step 2 · Choose Uncensored / A100 Model</span>
+              <span
+                className="badge"
+                style={{
+                  background: '#fff1f2',
+                  color: '#e11d48',
+                  borderColor: '#fecdd3',
+                }}
+              >
+                <Flame size={12} /> Uncensored & 70B+ A100 Ready
               </span>
             </div>
             <h2 style={{ fontSize: '1.14rem', fontWeight: 700, marginTop: 8 }}>
-              Select an Ollama Model to Update & Start Your Colab Server
+              Select an Uncensored or High-VRAM Ollama Model to Deploy on Colab
             </h2>
             <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginTop: 2 }}>
-              Pick any Ollama model (such as <code>llama3:8b</code>) and engine version below, then click{' '}
-              <strong>OK / Deploy</strong> to update the Colab server script and start serving via ngrok.
+              Choose a model from the quick-launch dropdown below (or type any custom tag like{' '}
+              <code>dolphin-llama3:70b</code>) and click <strong>Launch Model</strong>.
             </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <form
+            onSubmit={handleQuickLaunch}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: 10,
+              flexWrap: 'wrap',
+              background: 'var(--bg-page)',
+              padding: '12px 14px',
+              borderRadius: 12,
+              border: '1px solid var(--border-light)',
+            }}
+          >
             <div>
               <label
-                htmlFor="ollama-ver-select"
+                htmlFor="quick-model-select"
                 style={{
                   display: 'block',
                   fontSize: '0.75rem',
                   fontWeight: 600,
-                  color: 'var(--text-muted)',
+                  color: 'var(--text-secondary)',
                   marginBottom: 4,
                 }}
               >
-                Ollama Engine Version
+                Quick-Select Model (Uncensored & A100)
               </label>
               <select
-                id="ollama-ver-select"
+                id="quick-model-select"
                 className="select-input"
-                value={selectedOllamaVersion}
-                onChange={(e) => onChangeOllamaVersion(e.target.value)}
+                style={{ minWidth: 280 }}
+                value={quickPickModel}
+                onChange={(e) => {
+                  setQuickPickModel(e.target.value);
+                  setCustomModelInput('');
+                }}
               >
-                {OLLAMA_ENGINE_VERSIONS.map((v) => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}
+                {quickLaunchOptions.map((opt) => (
+                  <option key={opt.tag} value={opt.tag}>
+                    {opt.label}
                   </option>
                 ))}
               </select>
             </div>
 
-            <form onSubmit={handleCustomDeploy} style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-              <div>
-                <label
-                  htmlFor="custom-tag-input"
-                  style={{
-                    display: 'block',
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: 'var(--text-muted)',
-                    marginBottom: 4,
-                  }}
-                >
-                  Or Any Custom Ollama Tag
-                </label>
-                <input
-                  id="custom-tag-input"
-                  type="text"
-                  className="text-input mono"
-                  style={{ width: 210, fontSize: '0.83rem' }}
-                  placeholder="e.g. llama3:8b or mistral"
-                  value={customModelInput}
-                  onChange={(e) => setCustomModelInput(e.target.value)}
-                />
-              </div>
-              <button
-                type="submit"
-                className="btn btn-soft"
-                disabled={!isConnected || !customModelInput.trim()}
-                title={!isConnected ? 'Connect to Colab first to proceed' : 'Configure & launch custom model'}
+            <div>
+              <label
+                htmlFor="custom-tag-input"
+                style={{
+                  display: 'block',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  marginBottom: 4,
+                }}
               >
-                <Rocket size={15} />
-                Launch Tag
-              </button>
-            </form>
-          </div>
+                Or Override With Custom Tag
+              </label>
+              <input
+                id="custom-tag-input"
+                type="text"
+                className="text-input mono"
+                style={{ width: 230, fontSize: '0.82rem' }}
+                placeholder="e.g. huihui_ai/qwen2.5-abliterated:72b"
+                value={customModelInput}
+                onChange={(e) => setCustomModelInput(e.target.value)}
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={!isConnected || !activeQuickLaunchTarget}
+              title={
+                !isConnected
+                  ? 'Connect to your Colab ngrok URL in Step 1 first'
+                  : `Deploy ${activeQuickLaunchTarget} on Colab GPU`
+              }
+            >
+              <Rocket size={15} />
+              Launch {activeQuickLaunchTarget.split('/').pop()}
+            </button>
+          </form>
         </div>
 
         <hr style={{ border: 'none', borderTop: '1px solid var(--border-light)', margin: '18px 0' }} />
@@ -191,7 +244,7 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
             ))}
           </div>
 
-          <div style={{ position: 'relative', minWidth: 260 }}>
+          <div style={{ position: 'relative', minWidth: 270 }}>
             <Search
               size={15}
               style={{
@@ -206,7 +259,7 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
               type="text"
               className="text-input"
               style={{ width: '100%', paddingLeft: 35 }}
-              placeholder="Search Llama 3, DeepSeek, Gemma, Qwen..."
+              placeholder="Search Dolphin, Abliterated, Hermes, 70B..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -241,17 +294,34 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
                   }}
                 >
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                      <h3 style={{ fontSize: '1.02rem', fontWeight: 700 }}>{model.title}</h3>
-                      {model.featured && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <h3 style={{ fontSize: '1.01rem', fontWeight: 700 }}>{model.title}</h3>
+                      {model.uncensored && (
+                        <span
+                          className="badge"
+                          style={{
+                            background: '#fff1f2',
+                            color: '#e11d48',
+                            borderColor: '#fecdd3',
+                          }}
+                        >
+                          <Flame size={11} /> Uncensored
+                        </span>
+                      )}
+                      {model.high_vram && (
                         <span className="badge badge-blue">
-                          <Sparkles size={11} /> Popular
+                          <Zap size={11} /> A100 Ready
+                        </span>
+                      )}
+                      {!model.uncensored && model.featured && (
+                        <span className="badge badge-blue">
+                          <Sparkles size={11} /> Featured
                         </span>
                       )}
                     </div>
                     <div
                       className="mono"
-                      style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}
+                      style={{ fontSize: '0.77rem', color: 'var(--text-muted)', marginTop: 3 }}
                     >
                       {model.name} · {model.provider}
                     </div>
@@ -272,7 +342,7 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
 
                 <p
                   style={{
-                    fontSize: '0.85rem',
+                    fontSize: '0.84rem',
                     color: 'var(--text-secondary)',
                     marginTop: 10,
                     minHeight: 40,
@@ -293,7 +363,7 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
                       marginBottom: 6,
                     }}
                   >
-                    <span>Parameter Tag:</span>
+                    <span>Parameter Size Tag:</span>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <Cpu size={12} /> {model.vram_hint}
                     </span>
@@ -326,7 +396,7 @@ export const ModelBrowser: React.FC<ModelBrowserProps> = ({
                     borderTop: '1px solid var(--border-light)',
                   }}
                 >
-                  <code style={{ fontSize: '0.79rem', color: 'var(--text-secondary)' }}>
+                  <code style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                     {fullModelTag}
                   </code>
 

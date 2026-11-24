@@ -51,8 +51,10 @@ export interface CatalogModel {
   name: string;
   title: string;
   provider: string;
-  category: 'general' | 'reasoning' | 'coding' | 'vision' | 'embedding' | string;
+  category: 'uncensored' | 'general' | 'reasoning' | 'coding' | 'vision' | 'embedding' | string;
   featured: boolean;
+  uncensored?: boolean;
+  high_vram?: boolean;
   description: string;
   tags: string[];
   default_tag: string;
