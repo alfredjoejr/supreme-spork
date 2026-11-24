@@ -432,16 +432,19 @@ echo "[Runner] Model {req.model} ready for ngrok frontend requests."
                                 last_emit_ts = now
                                 yield emit("pull_status", status_txt, progress=92)
 
-            # Step 5: Warm up model in GPU VRAM
-            yield emit("warming_up", f"Loading '{req.model}' into Colab GPU memory...", progress=95)
+            # Step 5: Warm up model in GPU VRAM with matching num_ctx so chat doesn't trigger a reload
+            yield emit("warming_up", f"Loading '{req.model}' into Colab GPU memory (ctx={req.num_ctx})...", progress=95)
             try:
-                async with httpx.AsyncClient(timeout=90.0) as client:
+                async with httpx.AsyncClient(timeout=180.0) as client:
                     await client.post(
-                        f"{OLLAMA_HOST}/api/generate",
+                        f"{OLLAMA_HOST}/api/chat",
                         json={
                             "model": req.model,
-                            "prompt": "",
+                            "messages": [],
                             "keep_alive": req.keep_alive,
+                            "options": {
+                                "num_ctx": req.num_ctx,
+                            },
                         },
                     )
             except Exception:
@@ -468,10 +471,14 @@ echo "[Runner] Model {req.model} ready for ngrok frontend requests."
             yield json.dumps({"error": "No active model selected on Colab server."}) + "\n"
             return
 
+        # Flush initial event immediately through FastAPI & ngrok
+        yield json.dumps({"status": f"Running inference on {target_model}..."}) + "\n"
+
         ollama_payload = {
             "model": target_model,
             "messages": [m.model_dump() for m in req.messages],
             "stream": True,
+            "keep_alive": "15m",
             "options": {
                 "temperature": req.temperature,
                 "num_ctx": req.num_ctx,

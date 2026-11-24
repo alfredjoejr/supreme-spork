@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, Eraser, Layers, Send, Sliders } from 'lucide-react';
+import { AlertTriangle, Bot, Eraser, Layers, Loader2, Send, Sliders, Square } from 'lucide-react';
 import { streamColabChat } from '../services/colabApi';
-import { ChatMessage, InstalledModel } from '../types/api';
+import { ChatMessage, GpuMetrics, InstalledModel } from '../types/api';
 
 interface ChatPlaygroundProps {
   ngrokUrl: string;
   isConnected: boolean;
   activeModel?: string | null;
   installedModels: InstalledModel[];
+  loadedModels?: string[];
+  gpu?: GpuMetrics;
   onGoToModels: () => void;
 }
 
@@ -16,6 +18,8 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   isConnected,
   activeModel,
   installedModels,
+  loadedModels = [],
+  gpu,
   onGoToModels,
 }) => {
   const [selectedModel, setSelectedModel] = useState<string>(activeModel || '');
@@ -25,7 +29,9 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const [chatError, setChatError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -38,12 +44,43 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, elapsedSec]);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      setElapsedSec(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setElapsedSec((s) => s + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [isStreaming]);
+
+  const handleStop = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setIsStreaming(false);
+    setMessages((prev) => {
+      const updated = [...prev];
+      const last = updated[updated.length - 1];
+      if (last && last.role === 'assistant' && !last.content.trim()) {
+        updated[updated.length - 1] = {
+          role: 'assistant',
+          content: '[Generation stopped]',
+        };
+      }
+      return updated;
+    });
+  };
 
   const handleSend = async (e?: React.FormEvent, overridePrompt?: string) => {
     e?.preventDefault();
     const text = (overridePrompt ?? prompt).trim();
     if (!text || !selectedModel || isStreaming) return;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     const userMsg: ChatMessage = { role: 'user', content: text };
     const nextHistory: ChatMessage[] = [...messages, userMsg];
@@ -57,23 +94,44 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
       : nextHistory;
 
     try {
-      await streamColabChat(ngrokUrl, selectedModel, apiPayload, temperature, numCtx, (chunk) => {
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastIdx = updated.length - 1;
-          if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
-            updated[lastIdx] = {
-              ...updated[lastIdx],
-              content: updated[lastIdx].content + chunk,
-            };
-          }
-          return updated;
-        });
-      });
+      await streamColabChat(
+        ngrokUrl,
+        selectedModel,
+        apiPayload,
+        temperature,
+        numCtx,
+        (chunk) => {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                content: updated[lastIdx].content + chunk,
+              };
+            }
+            return updated;
+          });
+        },
+        controller.signal
+      );
     } catch (err) {
-      setChatError(err instanceof Error ? err.message : 'Chat stream failed.');
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
+      const errMsg = err instanceof Error ? err.message : 'Chat stream failed.';
+      setChatError(errMsg);
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last && last.role === 'assistant' && !last.content.trim()) {
+          updated.pop();
+        }
+        return updated;
+      });
     } finally {
       setIsStreaming(false);
+      abortRef.current = null;
     }
   };
 
@@ -113,8 +171,36 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
     ])
   );
 
+  const isModelInVram = loadedModels.includes(selectedModel);
+  const isLargeModel = /14b|27b|32b|34b|70b/i.test(selectedModel);
+
   return (
     <div className="card card-padding">
+      {gpu && !gpu.available && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: 'var(--bg-amber-soft)',
+            border: '1px solid #fde68a',
+            color: 'var(--amber)',
+            fontSize: '0.84rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
+          <AlertTriangle size={17} />
+          <span>
+            <strong>No GPU detected on your Colab runtime (running on CPU).</strong> Large models like{' '}
+            <code>{selectedModel}</code> can take 1–3 minutes per reply on CPU. In Google Colab, switch{' '}
+            <strong>Runtime → Change runtime type → T4 GPU</strong>, or test with a fast model like{' '}
+            <code>llama3.2:1b</code> or <code>llama3.2:3b</code>.
+          </span>
+        </div>
+      )}
+
       <div className="chat-layout">
         {/* Sidebar Controls */}
         <aside
@@ -165,6 +251,11 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
                 </option>
               ))}
             </select>
+            <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              {isModelInVram
+                ? '🟢 Loaded in Colab VRAM (hot)'
+                : '🟡 Cold — first message will load weights into VRAM'}
+            </div>
           </div>
 
           <div>
@@ -208,7 +299,7 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
               value={numCtx}
               onChange={(e) => setNumCtx(Number(e.target.value))}
             >
-              <option value={2048}>2,048 tokens</option>
+              <option value={2048}>2,048 tokens (Fastest)</option>
               <option value={4096}>4,096 tokens</option>
               <option value={8192}>8,192 tokens</option>
               <option value={16384}>16,384 tokens</option>
@@ -290,11 +381,32 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
                 </div>
               </div>
             ) : (
-              messages.map((m, idx) => (
-                <div key={idx} className={`chat-bubble ${m.role}`}>
-                  {m.content || (isStreaming && idx === messages.length - 1 ? 'Thinking...' : '')}
-                </div>
-              ))
+              messages.map((m, idx) => {
+                const isWaitingFirstToken =
+                  isStreaming && idx === messages.length - 1 && !m.content;
+
+                return (
+                  <div key={idx} className={`chat-bubble ${m.role}`}>
+                    {isWaitingFirstToken ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          <Loader2 size={15} className="spin" color="var(--accent)" />
+                          <span>Thinking... ({elapsedSec}s)</span>
+                        </div>
+                        {elapsedSec >= 4 && (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            {isLargeModel
+                              ? `Loading ${selectedModel} (9.5 GB 14B model) into Colab GPU memory — first token usually takes 25–50s...`
+                              : `Allocating CUDA runner for ${selectedModel} on Colab...`}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      m.content
+                    )}
+                  </div>
+                );
+              })
             )}
             <div ref={endRef} />
           </div>
@@ -324,15 +436,27 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
               onChange={(e) => setPrompt(e.target.value)}
               disabled={isStreaming}
             />
-            <button
-              type="submit"
-              className="btn btn-primary"
-              style={{ height: 44, padding: '0 20px' }}
-              disabled={isStreaming || !prompt.trim()}
-            >
-              <Send size={16} />
-              {isStreaming ? 'Streaming...' : 'Send'}
-            </button>
+            {isStreaming ? (
+              <button
+                type="button"
+                className="btn btn-danger-soft"
+                style={{ height: 44, padding: '0 18px' }}
+                onClick={handleStop}
+              >
+                <Square size={15} />
+                Stop
+              </button>
+            ) : (
+              <button
+                type="submit"
+                className="btn btn-primary"
+                style={{ height: 44, padding: '0 20px' }}
+                disabled={!prompt.trim()}
+              >
+                <Send size={16} />
+                Send
+              </button>
+            )}
           </form>
         </div>
       </div>

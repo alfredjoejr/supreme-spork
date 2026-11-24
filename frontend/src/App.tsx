@@ -96,6 +96,8 @@ export const App: React.FC = () => {
             isConnected={isConnected}
             activeModel={status?.active_model}
             installedModels={status?.installed_models ?? []}
+            loadedModels={status?.loaded_models ?? []}
+            gpu={status?.gpu}
             onGoToModels={() => setActiveTab('models')}
           />
         )}

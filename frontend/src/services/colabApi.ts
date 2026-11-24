@@ -326,7 +326,8 @@ export async function streamColabChat(
   messages: ChatMessage[],
   temperature: number,
   numCtx: number,
-  onToken: (chunk: string) => void
+  onToken: (chunk: string) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   const cleanUrl = normalizeBaseUrl(baseUrl);
 
@@ -334,6 +335,7 @@ export async function streamColabChat(
     const lastUser = messages[messages.length - 1]?.content ?? '';
     const reply = `[Simulated ${model} on Colab Tesla T4]\n\nYour Colab runner config is updated and serving **${model}**. Once you paste your live \`https://xxxx.ngrok-free.app\` URL from \`Ollama_Cloud_Runner.ipynb\`, your prompt ("${lastUser.slice(0, 60)}${lastUser.length > 60 ? '...' : ''}") will execute directly on Google Colab GPU hardware!`;
     for (const word of reply.split(' ')) {
+      if (signal?.aborted) return;
       await new Promise((r) => setTimeout(r, 35));
       onToken(word + ' ');
     }
@@ -350,35 +352,59 @@ export async function streamColabChat(
       num_ctx: numCtx,
       stream: true,
     }),
+    signal,
   });
 
   if (!resp.ok || !resp.body) {
-    throw new Error(`Chat request failed (${resp.status})`);
+    const errText = await resp.text().catch(() => '');
+    throw new Error(errText || `Chat request failed (HTTP ${resp.status})`);
   }
 
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
 
+  const processLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let parsed: {
+      error?: string;
+      response?: string;
+      message?: { content?: string; thinking?: string };
+    };
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+    if (parsed.error) {
+      throw new Error(parsed.error);
+    }
+    if (parsed.message?.thinking) {
+      onToken(parsed.message.thinking);
+    }
+    if (parsed.message?.content) {
+      onToken(parsed.message.content);
+    } else if (parsed.response) {
+      onToken(parsed.response);
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      buffer += decoder.decode();
+      if (buffer.trim()) {
+        processLine(buffer);
+      }
+      break;
+    }
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
 
     for (const line of lines) {
-      if (!line.trim()) continue;
-      const parsed = JSON.parse(line) as {
-        error?: string;
-        message?: { content?: string };
-      };
-      if (parsed.error) {
-        throw new Error(parsed.error);
-      }
-      if (parsed.message?.content) {
-        onToken(parsed.message.content);
-      }
+      processLine(line);
     }
   }
 }
