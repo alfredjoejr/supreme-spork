@@ -224,6 +224,55 @@ echo "[Runner] Model {req.model} ready for ngrok frontend requests."
             pass
         return []
 
+    async def unload_vram_models(self, exclude_model: Optional[str] = None) -> List[str]:
+        """
+        Explicitly evict loaded models from GPU VRAM using Ollama's keep_alive=0 API
+        so switching models never causes VRAM overlap or OOM.
+        """
+        loaded = await self.get_loaded_models()
+        unloaded: List[str] = []
+        if not loaded:
+            return unloaded
+
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            for model_name in loaded:
+                if exclude_model and model_name == exclude_model:
+                    continue
+                try:
+                    await client.post(
+                        f"{OLLAMA_HOST}/api/generate",
+                        json={"model": model_name, "prompt": "", "keep_alive": 0},
+                    )
+                    unloaded.append(model_name)
+                except Exception:
+                    pass
+
+        if unloaded:
+            # Brief pause to allow CUDA context to free pages
+            await asyncio.sleep(0.5)
+        return unloaded
+
+    async def switch_active_model(self, new_model: str, num_ctx: int = 4096) -> Dict[str, Any]:
+        """Release GPU VRAM from any currently loaded models and warm up the newly selected model."""
+        unloaded = await self.unload_vram_models(exclude_model=new_model)
+        self.active_model = new_model
+        self.state = "ready"
+        self.state_message = f"Active & serving {new_model}"
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                await client.post(
+                    f"{OLLAMA_HOST}/api/chat",
+                    json={
+                        "model": new_model,
+                        "messages": [],
+                        "keep_alive": "15m",
+                        "options": {"num_ctx": num_ctx},
+                    },
+                )
+        except Exception:
+            pass
+        return {"active_model": new_model, "unloaded_models": unloaded}
+
     async def stop_ollama(self) -> Dict[str, Any]:
         if self.process and self.process.poll() is None:
             self.process.terminate()
@@ -328,14 +377,23 @@ echo "[Runner] Model {req.model} ready for ngrok frontend requests."
                     progress=30,
                 )
 
-            # Step 3: Start (or restart) `ollama serve` with updated environment variables
+            # Step 3: Release any existing GPU VRAM models before starting/switching
             self.state = "starting"
             is_running = await self.is_ollama_running()
-            if is_running and req.restart_server:
-                yield emit("restarting_daemon", "Applying updated server configuration to Ollama daemon...", progress=38)
-                await self.stop_ollama()
-                await asyncio.sleep(0.8)
-                is_running = False
+            if is_running:
+                unloaded = await self.unload_vram_models(exclude_model=None)
+                if unloaded:
+                    yield emit(
+                        "vram_released",
+                        f"Released GPU VRAM by unloading previous model(s): {', '.join(unloaded)}",
+                        progress=38,
+                    )
+                else:
+                    yield emit(
+                        "vram_released",
+                        "Verified GPU VRAM is clear of previous models",
+                        progress=38,
+                    )
 
             if not is_running:
                 self.state_message = "Starting Ollama GPU server daemon..."
@@ -470,6 +528,12 @@ echo "[Runner] Model {req.model} ready for ngrok frontend requests."
         if not target_model:
             yield json.dumps({"error": "No active model selected on Colab server."}) + "\n"
             return
+
+        # Automatically evict any OTHER model currently holding GPU VRAM before running target_model
+        unloaded = await self.unload_vram_models(exclude_model=target_model)
+        if unloaded:
+            yield json.dumps({"status": f"Released GPU VRAM from {', '.join(unloaded)}..."}) + "\n"
+        self.active_model = target_model
 
         # Flush initial event immediately through FastAPI & ngrok
         yield json.dumps({"status": f"Running inference on {target_model}..."}) + "\n"

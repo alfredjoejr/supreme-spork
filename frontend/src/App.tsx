@@ -99,6 +99,7 @@ export const App: React.FC = () => {
             loadedModels={status?.loaded_models ?? []}
             gpu={status?.gpu}
             onGoToModels={() => setActiveTab('models')}
+            onRefreshStatus={refreshStatus}
           />
         )}
 

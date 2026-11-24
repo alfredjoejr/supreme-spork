@@ -130,7 +130,24 @@ async def deploy_server(req: DeployRequest):
 
 @app.post("/api/server/stop")
 async def stop_server():
+    await manager.unload_vram_models(exclude_model=None)
     return await manager.stop_ollama()
+
+
+@app.post("/api/server/unload")
+async def unload_vram():
+    unloaded = await manager.unload_vram_models(exclude_model=None)
+    manager.active_model = None
+    return {"unloaded_models": unloaded}
+
+
+@app.post("/api/models/switch")
+async def switch_model(payload: dict):
+    target = payload.get("model")
+    num_ctx = int(payload.get("num_ctx", 4096))
+    if not target:
+        raise HTTPException(status_code=400, detail="Missing 'model' field.")
+    return await manager.switch_active_model(target, num_ctx=num_ctx)
 
 
 @app.post("/api/chat")

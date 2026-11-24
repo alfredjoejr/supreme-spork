@@ -1,6 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Bot, Eraser, Layers, Loader2, Send, Sliders, Square } from 'lucide-react';
-import { streamColabChat } from '../services/colabApi';
+import {
+  AlertTriangle,
+  Bot,
+  Cpu,
+  Eraser,
+  Layers,
+  Loader2,
+  Send,
+  Sliders,
+  Square,
+} from 'lucide-react';
+import {
+  streamColabChat,
+  switchColabModel,
+  unloadColabVram,
+} from '../services/colabApi';
 import { ChatMessage, GpuMetrics, InstalledModel } from '../types/api';
 
 interface ChatPlaygroundProps {
@@ -11,6 +25,7 @@ interface ChatPlaygroundProps {
   loadedModels?: string[];
   gpu?: GpuMetrics;
   onGoToModels: () => void;
+  onRefreshStatus?: () => void;
 }
 
 export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
@@ -21,6 +36,7 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   loadedModels = [],
   gpu,
   onGoToModels,
+  onRefreshStatus,
 }) => {
   const [selectedModel, setSelectedModel] = useState<string>(activeModel || '');
   const [systemPrompt, setSystemPrompt] = useState(
@@ -31,6 +47,8 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isSwitchingVram, setIsSwitchingVram] = useState(false);
+  const [vramNotice, setVramNotice] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [chatError, setChatError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -245,7 +263,24 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
               className="select-input mono"
               style={{ width: '100%', fontSize: '0.82rem' }}
               value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
+              disabled={isSwitchingVram || isStreaming}
+              onChange={async (e) => {
+                const nextModel = e.target.value;
+                setSelectedModel(nextModel);
+                setIsSwitchingVram(true);
+                setVramNotice(`Releasing previous GPU VRAM & loading ${nextModel}...`);
+                try {
+                  const unloaded = await switchColabModel(ngrokUrl, nextModel, numCtx);
+                  if (unloaded.length > 0) {
+                    setVramNotice(`Freed VRAM (${unloaded.join(', ')}) → loaded ${nextModel}`);
+                  } else {
+                    setVramNotice(`Switched active GPU model to ${nextModel}`);
+                  }
+                  onRefreshStatus?.();
+                } finally {
+                  setIsSwitchingVram(false);
+                }
+              }}
             >
               {modelChoices.map((name) => (
                 <option key={name} value={name}>
@@ -253,11 +288,66 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
                 </option>
               ))}
             </select>
-            <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: 4 }}>
-              {isModelInVram
-                ? '🟢 Loaded in Colab VRAM (hot)'
-                : '🟡 Cold — first message will load weights into VRAM'}
+            <div
+              style={{
+                fontSize: '0.73rem',
+                color: 'var(--text-muted)',
+                marginTop: 5,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 6,
+              }}
+            >
+              <span>
+                {isSwitchingVram
+                  ? '🔄 Releasing GPU VRAM...'
+                  : isModelInVram
+                    ? '🟢 Loaded in Colab VRAM'
+                    : '🟡 Standby (Not in VRAM)'}
+              </span>
+              {loadedModels.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ height: 24, padding: '0 8px', fontSize: '0.7rem' }}
+                  disabled={isSwitchingVram || isStreaming}
+                  onClick={async () => {
+                    setIsSwitchingVram(true);
+                    setVramNotice('Evicting all models from GPU VRAM...');
+                    try {
+                      const unloaded = await unloadColabVram(ngrokUrl);
+                      setVramNotice(
+                        unloaded.length > 0
+                          ? `Freed GPU VRAM (${unloaded.join(', ')})`
+                          : 'GPU VRAM is now empty'
+                      );
+                      onRefreshStatus?.();
+                    } finally {
+                      setIsSwitchingVram(false);
+                    }
+                  }}
+                  title="Immediately evict loaded models from Colab GPU VRAM (keep_alive=0)"
+                >
+                  <Cpu size={11} /> Free VRAM
+                </button>
+              )}
             </div>
+            {vramNotice && (
+              <div
+                style={{
+                  marginTop: 6,
+                  fontSize: '0.72rem',
+                  color: 'var(--accent)',
+                  background: 'var(--bg-accent-soft)',
+                  padding: '4px 8px',
+                  borderRadius: 6,
+                  border: '1px solid #bfdbfe',
+                }}
+              >
+                {vramNotice}
+              </div>
+            )}
           </div>
 
           <div>

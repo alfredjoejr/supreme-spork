@@ -328,6 +328,46 @@ export async function stopColabOllama(baseUrl: string): Promise<void> {
   });
 }
 
+export async function unloadColabVram(baseUrl: string): Promise<string[]> {
+  const cleanUrl = normalizeBaseUrl(baseUrl);
+  if (cleanUrl === DEMO_MODE_URL) {
+    const prev = demoState.activeModel ? [demoState.activeModel] : [];
+    demoState.activeModel = null;
+    return prev;
+  }
+  const resp = await fetch(`${cleanUrl}/api/server/unload`, {
+    method: 'POST',
+    headers: buildHeaders(),
+  });
+  if (!resp.ok) return [];
+  const data = (await resp.json()) as { unloaded_models?: string[] };
+  return data.unloaded_models ?? [];
+}
+
+export async function switchColabModel(
+  baseUrl: string,
+  newModel: string,
+  numCtx: number
+): Promise<string[]> {
+  const cleanUrl = normalizeBaseUrl(baseUrl);
+  if (cleanUrl === DEMO_MODE_URL) {
+    const prev =
+      demoState.activeModel && demoState.activeModel !== newModel
+        ? [demoState.activeModel]
+        : [];
+    demoState.activeModel = newModel;
+    return prev;
+  }
+  const resp = await fetch(`${cleanUrl}/api/models/switch`, {
+    method: 'POST',
+    headers: buildHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ model: newModel, num_ctx: numCtx }),
+  });
+  if (!resp.ok) return [];
+  const data = (await resp.json()) as { unloaded_models?: string[] };
+  return data.unloaded_models ?? [];
+}
+
 export async function deleteInstalledModel(baseUrl: string, modelName: string): Promise<void> {
   const cleanUrl = normalizeBaseUrl(baseUrl);
   if (cleanUrl === DEMO_MODE_URL) {
