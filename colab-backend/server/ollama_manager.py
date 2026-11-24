@@ -651,7 +651,7 @@ echo "[Runner] Model {req.model} ready for ngrok frontend requests."
             yield emit("warming_up", f"Loading '{req.model}' into Colab GPU memory (ctx={req.num_ctx})...", progress=95)
             try:
                 async with httpx.AsyncClient(timeout=180.0) as client:
-                    await client.post(
+                    warmup_resp = await client.post(
                         f"{OLLAMA_HOST}/api/chat",
                         json={
                             "model": req.model,
@@ -662,8 +662,27 @@ echo "[Runner] Model {req.model} ready for ngrok frontend requests."
                             },
                         },
                     )
-            except Exception:
-                pass
+                    if warmup_resp.status_code != 200:
+                        err_body = warmup_resp.text
+                        if "check_tensor_dims" in err_body:
+                            await self.delete_model(req.model)
+                            self.state = "error"
+                            self.state_message = f"Incompatible GGUF tensor header in {req.model}"
+                            yield emit(
+                                "error",
+                                f"Community model '{req.model}' has an incompatible GGUF tensor header (check_tensor_dims) for modern Ollama and was removed to save disk space. Please choose dolphin-llama3, hermes3, huihui_ai/qwen2.5-abliterated, or huihui_ai/deepseek-r1-abliterated.",
+                                progress=95,
+                            )
+                            return
+                        self.state = "error"
+                        self.state_message = f"Failed to load {req.model} into GPU"
+                        yield emit("error", f"Failed to load model into GPU: {err_body}", progress=95)
+                        return
+            except Exception as warmup_exc:
+                self.state = "error"
+                self.state_message = str(warmup_exc)
+                yield emit("error", f"Warmup error loading '{req.model}': {warmup_exc}", progress=95)
+                return
 
             self.active_model = req.model
             self.state = "ready"

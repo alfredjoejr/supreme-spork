@@ -558,6 +558,11 @@ export async function streamColabChat(
       return;
     }
     if (parsed.error) {
+      if (parsed.error.includes('check_tensor_dims')) {
+        throw new Error(
+          `Incompatible GGUF tensor shape in '${model}' (this community upload was packaged with an older llama.cpp vocab padding: 262208 vs 262145). Please switch to dolphin-llama3, hermes3, huihui_ai/qwen2.5-abliterated, or huihui_ai/deepseek-r1-abliterated.`
+        );
+      }
       throw new Error(parsed.error);
     }
     if (parsed.message?.thinking) {
