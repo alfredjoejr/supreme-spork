@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Build outputs
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# Runtime state
+.ollama_runner/
+*.log
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
